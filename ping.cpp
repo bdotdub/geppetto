@@ -1,50 +1,54 @@
 #include "config.h"
 #include <Pinoccio.h>
 
-static SYS_Timer_t appTimer;
-static NWK_DataReq_t appDataReq;
-static bool appDataReqBusy = false;
-static uint8_t appPingCounter = 0;
-static bool receivedPacket = false;
+#define RECIPIENT_ADDRESS 1
 
-static void appSendDataConf(NWK_DataReq_t *req) {
-  appDataReqBusy = false;
+static SYS_Timer_t periodicTimer;
+static NWK_DataReq_t messageData;
+static bool messageDataBusy = false;
+static uint8_t appPingCounter = 0;
+
+static void messageSentConfirmation(NWK_DataReq_t *req) {
+  messageDataBusy = false;
   (void)req;
 }
 
-static void appSendData(void) {
-  if (appDataReqBusy) {
+static void sendMessage(void) {
+  if (messageDataBusy) {
     return;
   }
 
-  appDataReq.dstAddr = 1;
-  appDataReq.dstEndpoint = APP_ENDPOINT;
-  appDataReq.srcEndpoint = APP_ENDPOINT;
-  appDataReq.options = NWK_OPT_ENABLE_SECURITY;
-  appDataReq.data = &appPingCounter;
-  appDataReq.size = sizeof(appPingCounter);
-  appDataReq.confirm = appSendDataConf;
-  NWK_DataReq(&appDataReq);
+  messageData.dstAddr = RECIPIENT_ADDRESS;
+  messageData.dstEndpoint = APP_ENDPOINT;
+  messageData.srcEndpoint = APP_ENDPOINT;
+  messageData.options = NWK_OPT_ENABLE_SECURITY;
+  messageData.data = &appPingCounter;
+  messageData.size = sizeof(appPingCounter);
+  messageData.confirm = messageSentConfirmation;
+  NWK_DataReq(&messageData);
 
   appPingCounter++;
-  appDataReqBusy = true;
-  
+  messageDataBusy = true;
+
   RgbLed.blinkCyan(100);
 }
 
-static void appTimerHandler(SYS_Timer_t *timer) {
-  if (APP_ADDR == 0) {
-    appSendData();
+static bool isSender() {
+  return APP_ADDR == 0;
+}
+
+static void periodicTimerHandler(SYS_Timer_t *timer) {
+  if (isSender()) {
+    sendMessage();
     (void)timer;
-  }
-  if (APP_ADDR == 1) {
+  } else {
     Serial.println("Waiting....");
   }
 }
 
-static bool appDataInd(NWK_DataInd_t *ind) {
+static bool processMessage(NWK_DataInd_t *ind) {
   RgbLed.blinkCyan(100);
-  receivedPacket = true;
+
   Serial.print("lqi: ");
   Serial.print(ind->lqi, DEC);
 
@@ -62,21 +66,28 @@ static bool appDataInd(NWK_DataInd_t *ind) {
   return true;
 }
 
-void setup() {
-  Pinoccio.init();
-  
+void setupMeshNetwork() {
   NWK_SetAddr(APP_ADDR);
   NWK_SetPanId(APP_PANID);
   PHY_SetChannel(APP_CHANNEL);
   PHY_SetRxState(true);
-  NWK_OpenEndpoint(APP_ENDPOINT, appDataInd);
-  
-  appTimer.interval = 50000;
-  appTimer.mode = SYS_TIMER_PERIODIC_MODE;
-  appTimer.handler = appTimerHandler;
-  SYS_TimerStart(&appTimer);
+  NWK_OpenEndpoint(APP_ENDPOINT, processMessage);
+}
+
+void startPeriodicTimer() {
+  periodicTimer.interval = 50000;
+  periodicTimer.mode = SYS_TIMER_PERIODIC_MODE;
+  periodicTimer.handler = periodicTimerHandler;
+  SYS_TimerStart(&periodicTimer);
+}
+
+void setup() {
+  Pinoccio.init();
 
   appPingCounter = 0;
+
+  setupMeshNetwork();
+  startPeriodicTimer();
 }
 
 void loop() {
