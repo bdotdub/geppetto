@@ -1,4 +1,3 @@
-#include "config.h"
 #include <Pinoccio.h>
 
 #define Debug 1
